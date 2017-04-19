@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.InMemory.FunctionalTests;
 using Microsoft.EntityFrameworkCore.Internal;
@@ -50,6 +51,47 @@ namespace Microsoft.EntityFrameworkCore.Tests.Metadata.Internal
 
         private class D : C
         {
+        }
+
+        [Fact]
+        public void Invalid_filter_expressions_throws()
+        {
+            var model = new Model();
+
+            var entityTypeA = model.AddEntityType(typeof(A).Name);
+
+            Expression<Func<B, bool>> badExpression1 = b => false;
+
+            Assert.Equal(
+                CoreStrings.BadFilterExpression(badExpression1, entityTypeA.DisplayName(), entityTypeA.ClrType),
+                Assert.Throws<InvalidOperationException>(() => entityTypeA.Filter = badExpression1).Message);
+
+            Expression<Func<A, string>> badExpression2 = a => "";
+
+            Assert.Equal(
+                CoreStrings.BadFilterExpression(badExpression2, entityTypeA.DisplayName(), entityTypeA.ClrType),
+                Assert.Throws<InvalidOperationException>(() => entityTypeA.Filter = badExpression2).Message);
+
+            var customerType = model.AddEntityType(typeof(Customer));
+            var customerKey = customerType.GetOrAddKey(customerType.GetOrAddProperty(Customer.IdProperty));
+
+            var orderType = model.AddEntityType(typeof(Order));
+            var foreignKeyProperty = orderType.GetOrAddProperty(Order.CustomerIdProperty);
+            var customerForeignKey = orderType.GetOrAddForeignKey(foreignKeyProperty, customerKey, customerType);
+
+            customerForeignKey.HasDependentToPrincipal(Order.CustomerProperty);
+            
+            Expression<Func<Order, bool>> badExpression3 = o => o.Customer.Id == 0;
+            
+            Assert.Equal(
+                CoreStrings.BadFilterExpression(badExpression3, orderType.DisplayName(), orderType.ClrType),
+                Assert.Throws<InvalidOperationException>(() => orderType.Filter = badExpression3).Message);
+
+            Expression<Func<Order, bool>> badExpression4 = o => EF.Property<Customer>(o, "Customer").Id == 0;
+
+            Assert.Equal(
+                CoreStrings.BadFilterExpression(badExpression4, orderType.DisplayName(), orderType.ClrType),
+                Assert.Throws<InvalidOperationException>(() => orderType.Filter = badExpression4).Message);
         }
 
         [Fact]

@@ -4,15 +4,33 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Internal;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Xunit;
+using System;
 
 namespace Microsoft.EntityFrameworkCore.Infrastructure.Tests
 {
     public class CoreModelValidatorTest : ModelValidatorTest
     {
+        [Fact]
+        public virtual void Detects_filter_on_derived_type()
+        {
+            var model = new Model();
+            var entityTypeA = model.AddEntityType(typeof(A));
+            SetPrimaryKey(entityTypeA);
+            var entityTypeD = model.AddEntityType(typeof(D));
+            entityTypeD.HasBaseType(entityTypeA);
+
+            Expression<Func<D, bool>> filter = _ => true;
+
+            entityTypeD.Filter = filter;
+
+            VerifyError(CoreStrings.BadFilterDerivedType(entityTypeD.Filter, entityTypeD.DisplayName()), model);
+        }
+
         [Fact]
         public virtual void Detects_shadow_entities()
         {

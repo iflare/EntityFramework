@@ -5,11 +5,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using JetBrains.Annotations;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Internal;
+using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Utilities;
 
@@ -37,6 +39,7 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
 
         private Key _primaryKey;
         private EntityType _baseType;
+        private LambdaExpression _filter;
 
         private ChangeTrackingStrategy? _changeTrackingStrategy;
 
@@ -117,6 +120,87 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
         ///     directly from your code. This API may change or be removed in future releases.
         /// </summary>
         public virtual EntityType BaseType => _baseType;
+
+        /// <summary>
+        ///     This API supports the Entity Framework Core infrastructure and is not intended to be used
+        ///     directly from your code. This API may change or be removed in future releases.
+        /// </summary>
+        public virtual LambdaExpression Filter
+        {
+            get => _filter;
+            [param: CanBeNull]
+            set
+            {
+                if (value != null
+                    && !new FilterValidatingExppressionVisitor(this).IsValid(value))
+                {
+                    throw new InvalidOperationException(
+                        CoreStrings.BadFilterExpression(value, this.DisplayName(), ClrType));
+                }
+
+                _filter = value;
+            }
+        }
+
+        private sealed class FilterValidatingExppressionVisitor : ExpressionVisitor
+        {
+            private readonly EntityType _entityType;
+
+            private ParameterExpression _targetParameter;
+
+            private bool _valid = true;
+
+            public FilterValidatingExppressionVisitor(EntityType entityType)
+            {
+                _entityType = entityType;
+            }
+
+            public bool IsValid(LambdaExpression filter)
+            {
+                if (filter.Parameters.Count != 1
+                    || filter.Parameters[0].Type != _entityType.ClrType
+                    || filter.ReturnType != typeof(bool))
+                {
+                    return false;
+                }
+
+                _targetParameter = filter.Parameters[0];
+
+                Visit(filter.Body);
+
+                return _valid;
+            }
+
+            protected override Expression VisitMember(MemberExpression memberExpression)
+            {
+                if (memberExpression.Expression == _targetParameter
+                    && memberExpression.Member is PropertyInfo propertyInfo
+                    && _entityType.FindNavigation(propertyInfo) != null)
+                {
+                    _valid = false;
+
+                    return memberExpression;
+                }
+
+                return base.VisitMember(memberExpression);
+            }
+
+            protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
+            {
+                if (EntityQueryModelVisitor.IsPropertyMethod(methodCallExpression.Method)
+                    && methodCallExpression.Arguments[0] == _targetParameter
+                    && (!(methodCallExpression.Arguments[1] is ConstantExpression constantExpression)
+                        || !(constantExpression.Value is string propertyName)
+                        || _entityType.FindNavigation(propertyName) != null))
+                {
+                    _valid = false;
+
+                    return methodCallExpression;
+                }
+
+                return base.VisitMethodCall(methodCallExpression);
+            }
+        }
 
         /// <summary>
         ///     Gets the name of the defining navigation for this entity type with delegated identity.
@@ -309,7 +393,7 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
         /// </summary>
         public virtual ChangeTrackingStrategy ChangeTrackingStrategy
         {
-            get { return _changeTrackingStrategy ?? Model.ChangeTrackingStrategy; }
+            get => _changeTrackingStrategy ?? Model.ChangeTrackingStrategy;
             set
             {
                 var errorMessage = this.CheckChangeTrackingStrategy(value);
@@ -459,8 +543,8 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
                 return _baseType.FindPrimaryKey(properties);
             }
 
-            if ((_primaryKey != null)
-                && (PropertyListComparer.Instance.Compare(_primaryKey.Properties, properties) == 0))
+            if (_primaryKey != null
+                && PropertyListComparer.Instance.Compare(_primaryKey.Properties, properties) == 0)
             {
                 return _primaryKey;
             }
@@ -1118,7 +1202,7 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
                     duplicateProperty.DeclaringEntityType.DisplayName()));
             }
 
-            Debug.Assert(!GetNavigations().Any(n => (n.ForeignKey == foreignKey) && (n.IsDependentToPrincipal() == pointsToPrincipal)),
+            Debug.Assert(!GetNavigations().Any(n => n.ForeignKey == foreignKey && n.IsDependentToPrincipal() == pointsToPrincipal),
                 "There is another navigation corresponding to the same foreign key and pointing in the same direction.");
 
             Debug.Assert((pointsToPrincipal ? foreignKey.DeclaringEntityType : foreignKey.PrincipalEntityType) == this,
@@ -1749,10 +1833,16 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
 
         IMutableEntityType IMutableEntityType.BaseType
         {
-            get { return _baseType; }
-            set { HasBaseType((EntityType)value); }
+            get => _baseType;
+            set => HasBaseType((EntityType)value);
         }
 
+        LambdaExpression IMutableEntityType.Filter
+        {
+            get => Filter;
+            set => Filter = value;
+        }
+        
         IEntityType IEntityType.DefiningEntityType => DefiningEntityType;
 
         IMutableKey IMutableEntityType.SetPrimaryKey(IReadOnlyList<IMutableProperty> properties)
@@ -1836,16 +1926,16 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal
 
                 // Neither property is part of the Primary Key
                 // Compare the property names
-                if ((xIndex == -1)
-                    && (yIndex == -1))
+                if (xIndex == -1
+                    && yIndex == -1)
                 {
                     return StringComparer.Ordinal.Compare(x, y);
                 }
 
                 // Both properties are part of the Primary Key
                 // Compare the indices
-                if ((xIndex > -1)
-                    && (yIndex > -1))
+                if (xIndex > -1
+                    && yIndex > -1)
                 {
                     return xIndex - yIndex;
                 }
