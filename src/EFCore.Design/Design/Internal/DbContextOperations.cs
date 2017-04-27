@@ -80,8 +80,8 @@ namespace Microsoft.EntityFrameworkCore.Design.Internal
             var context = factory();
             _reporter.WriteVerbose(DesignStrings.LogUseContext(context.GetType().ShortDisplayName()));
 
-            var loggerFactory = context.GetService<ILoggerFactory>();
-            loggerFactory.AddProvider(new LoggerProvider(categoryName => new OperationLogger(categoryName, _reporter)));
+            var loggerFactory = context.GetService<ILoggerFactory>() as LoggerFactory;
+            loggerFactory?.AddProvider(new LoggerProvider(categoryName => new OperationLogger(categoryName, _reporter)));
 
             return context;
         }

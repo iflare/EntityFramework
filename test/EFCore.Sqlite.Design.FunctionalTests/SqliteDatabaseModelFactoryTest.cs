@@ -36,7 +36,8 @@ namespace Microsoft.EntityFrameworkCore.Sqlite.Design.FunctionalTests
             var serviceProvider = serviceCollection.BuildServiceProvider();
 
             var logger = new TestLogger();
-            serviceProvider.GetService<ILoggerFactory>().AddProvider(new TestLoggerProvider(logger));
+            var factory = serviceProvider.GetService<ILoggerFactory>() as LoggerFactory;
+            factory?.AddProvider(new TestLoggerProvider(logger));
 
             _factory = serviceProvider
                 .GetService<IDatabaseModelFactory>() as SqliteDatabaseModelFactory;
